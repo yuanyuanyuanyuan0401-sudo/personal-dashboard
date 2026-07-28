@@ -1,5 +1,6 @@
 <template>
   <div class="reading-page">
+    <!-- 顶部 -->
     <div class="page-header">
       <h1 class="page-title">阅读</h1>
       <div class="header-actions">
@@ -14,86 +15,93 @@
       <div class="touch-moment-text">{{ touchMomentText }}</div>
     </div>
 
-    <!-- 微信读书连接 -->
-    <div v-if="!wereadKey" class="card">
-      <div class="card-title">🔗 微信读书</div>
-      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;">
-        配置微信读书 API Key 自动同步书架和阅读时长
-      </p>
-      <router-link to="/settings" class="btn btn-secondary">前往设置</router-link>
-    </div>
-
-    <div v-else>
-      <div class="card">
-        <div class="card-title">🔗 微信读书</div>
-        <div class="stat-grid">
-          <div class="stat-card">
-            <div class="stat-value">{{ todayMinutes }}<span class="stat-unit">m</span></div>
-            <div class="stat-label">今日阅读</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value">{{ weekMinutes }}<span class="stat-unit">m</span></div>
-            <div class="stat-label">本周阅读</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value">{{ monthMinutes }}<span class="stat-unit">m</span></div>
-            <div class="stat-label">本月阅读</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value">{{ streakDays }}</div>
-            <div class="stat-label">连续天数</div>
-          </div>
+    <!-- 阅读统计卡片（始终显示） -->
+    <div class="card">
+      <div class="card-title">📊 阅读统计</div>
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-value">{{ todayMinutes }}<span class="stat-unit">分钟</span></div>
+          <div class="stat-label">今日阅读</div>
         </div>
-        <button class="btn btn-secondary btn-block" @click="syncFromWeRead" :disabled="syncing" style="margin-top:12px;">
+        <div class="stat-card">
+          <div class="stat-value">{{ weekMinutes }}<span class="stat-unit">分钟</span></div>
+          <div class="stat-label">本周阅读</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">{{ monthMinutes }}<span class="stat-unit">分钟</span></div>
+          <div class="stat-label">本月阅读</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">{{ streakDays }}</div>
+          <div class="stat-label">连续天数</div>
+        </div>
+      </div>
+
+      <!-- 微信读书同步按钮 -->
+      <div v-if="wereadKey" class="sync-row">
+        <button class="btn btn-secondary btn-block" @click="syncFromWeRead" :disabled="syncing">
           {{ syncing ? '同步中...' : '🔄 同步微信读书' }}
         </button>
       </div>
+      <div v-else class="sync-row">
+        <p class="sync-hint">📖 配置微信读书 API Key 可自动同步书架</p>
+        <router-link to="/settings" class="btn btn-secondary btn-block">前往设置</router-link>
+      </div>
     </div>
 
-    <!-- 阅读计时 -->
+    <!-- 阅读计时（有选择书籍时显示） -->
     <div class="card" v-if="activeBook">
-      <div class="card-title">📖 当前阅读：{{ activeBook.title }}</div>
+      <div class="card-title">📖 当前阅读：<strong>{{ activeBook.title }}</strong></div>
       <div class="reading-timer">
         <div class="timer-display">{{ readingFormattedTime }}</div>
         <div class="timer-actions">
-          <button v-if="!readingActive" class="btn btn-primary" @click="startReading">开始阅读</button>
-          <button v-if="readingActive" class="btn btn-danger" @click="stopReading">结束阅读</button>
+          <button v-if="!readingActive" class="btn btn-primary" @click="startReading">▶ 开始阅读</button>
+          <button v-if="readingActive" class="btn btn-danger" @click="stopReading">⏹ 结束阅读</button>
         </div>
+      </div>
+    </div>
+
+    <!-- 选择当前阅读书目 -->
+    <div class="card">
+      <div class="card-title">📚 选择在读</div>
+      <div class="book-select-row">
+        <select v-model="activeBookId" class="select" @change="updateActiveBook">
+          <option :value="null">— 选择一本书开始计时 —</option>
+          <option v-for="b in readingBooks" :key="b.id" :value="b.id">{{ b.title }}</option>
+        </select>
       </div>
     </div>
 
     <!-- 今日阅读思考 -->
     <div class="card">
       <div class="card-title">✍️ 今日阅读思考</div>
-      <div class="card-subtitle">记录一闪而过的想法</div>
-      <select v-model="thoughtBookId" class="select" style="margin-bottom:8px;">
-        <option :value="null">不关联书</option>
-        <option v-for="b in readingBooks" :key="b.id" :value="b.id">{{ b.title }}</option>
-      </select>
-      <textarea v-model="thoughtContent" class="textarea" placeholder="刚刚想到的..." rows="2"></textarea>
-      <button class="btn btn-primary btn-block" @click="saveThought" :disabled="!thoughtContent" style="margin-top:8px;">记下想法</button>
-
-      <div v-if="todayThoughts.length > 0" class="thought-list">
-        <div v-for="t in todayThoughts" :key="t.id" class="thought-item">
-          <div class="thought-meta">
-            <span class="thought-time">{{ formatTime(t.created_at) }}</span>
-            <button class="btn-icon-small danger" @click="deleteThought(t)">✕</button>
-          </div>
-          <div v-if="thoughtBook(t.book_id)" class="thought-book">📖 {{ thoughtBook(t.book_id) }}</div>
-          <div class="thought-content">{{ t.content }}</div>
+      <textarea v-model="thoughtContent" class="textarea" placeholder="读到这里，想到了什么说..." rows="2"></textarea>
+      <div class="thought-book-row">
+        <select v-model="thoughtBookId" class="select" style="flex:1;">
+          <option :value="null">不关联书</option>
+          <option v-for="b in readingBooks" :key="b.id" :value="b.id">{{ b.title }}</option>
+        </select>
+        <button class="btn btn-primary btn-sm" @click="saveThought" :disabled="!thoughtContent">记下</button>
+      </div>
+      <!-- 今日思考列表 -->
+      <div v-if="todayThoughts.length > 0" class="thought-mini-list">
+        <div v-for="t in todayThoughts" :key="t.id" class="thought-mini-item">
+          <div class="thought-mini-time">{{ formatTime(t.created_at) }}</div>
+          <div class="thought-mini-text">{{ t.content }}</div>
+          <button class="btn-icon-small danger" @click="deleteThought(t)">✕</button>
         </div>
       </div>
     </div>
 
     <!-- 添加书目 -->
-    <div class="card">
+    <div class="card add-book-card">
       <div class="card-title">➕ 添加书目</div>
-      <div class="add-book-row">
-        <input v-model="newBook.title" class="input" placeholder="书名" style="flex:2;" />
-        <input v-model="newBook.author" class="input" placeholder="作者" style="flex:1;" />
+      <div class="add-row">
+        <input v-model="newBook.title" class="input" placeholder="书名" />
+        <input v-model="newBook.author" class="input" placeholder="作者" />
       </div>
-      <div class="add-book-row" style="margin-top:8px;">
-        <select v-model="newBook.status" class="select" style="flex:1;">
+      <div class="add-row">
+        <select v-model="newBook.status" class="select">
           <option value="reading">在读</option>
           <option value="finished">已读完</option>
           <option value="wishlist">想读</option>
@@ -102,62 +110,82 @@
       </div>
     </div>
 
-    <!-- 选中当前阅读 -->
-    <div class="card" v-if="readingBooks.length > 0">
-      <div class="card-title">📚 选择当前阅读</div>
-      <select v-model="activeBookId" class="select" @change="updateActiveBook">
-        <option :value="null">不选择</option>
-        <option v-for="b in readingBooks" :key="b.id" :value="b.id">{{ b.title }}</option>
-      </select>
-    </div>
-
-    <!-- 在读 -->
-    <div v-if="readingBooks.length > 0" class="card">
-      <div class="card-title">📖 在读 ({{ readingBooks.length }})</div>
-      <div v-for="book in readingBooks" :key="book.id" class="book-item">
-        <div class="book-info">
-          <span class="book-title">{{ book.title }}</span>
-          <span class="book-author">{{ book.author }}</span>
+    <!-- 书目分组：点击展开 -->
+    <div class="book-section-list">
+      <!-- 在读 -->
+      <div class="card book-section" @click="toggleSection('reading')">
+        <div class="section-header">
+          <span class="section-icon">📖</span>
+          <span class="section-title">在读</span>
+          <span class="section-count">{{ readingBooks.length }}</span>
+          <span class="section-arrow">{{ expandedSection === 'reading' ? '▼' : '▶' }}</span>
         </div>
-        <div class="book-stats">
-          <span class="book-minutes">{{ getBookMinutes(book.id) }}分钟</span>
-          <button class="btn-icon-small danger" @click="deleteBook(book)">✕</button>
-        </div>
+        <transition name="fade">
+          <div v-if="expandedSection === 'reading'" class="section-body">
+            <div v-if="readingBooks.length === 0" class="section-empty">暂无</div>
+            <div v-for="book in readingBooks" :key="book.id" class="section-book-item" @click.stop @click="selectAndStart(book)">
+              <div class="sb-info">
+                <span class="sb-title">{{ book.title }}</span>
+                <span class="sb-author">{{ book.author }}</span>
+              </div>
+              <div class="sb-stats">
+                <span class="sb-minutes">{{ getBookMinutes(book.id) }}分钟</span>
+                <button class="btn-icon-small" @click.stop="startTimerForBook(book)" title="开始计时">🍅</button>
+                <button class="btn-icon-small danger" @click.stop="deleteBook(book)">✕</button>
+              </div>
+            </div>
+          </div>
+        </transition>
       </div>
-    </div>
 
-    <!-- 已读完 -->
-    <div v-if="finishedBooks.length > 0" class="card">
-      <div class="card-title">✅ 已读完 ({{ finishedBooks.length }})</div>
-      <div v-for="book in finishedBooks" :key="book.id" class="book-item">
-        <div class="book-info">
-          <span class="book-title">{{ book.title }}</span>
-          <span class="book-author">{{ book.author }}</span>
+      <!-- 已读完 -->
+      <div class="card book-section" @click="toggleSection('finished')">
+        <div class="section-header">
+          <span class="section-icon">✅</span>
+          <span class="section-title">已读完</span>
+          <span class="section-count">{{ finishedBooks.length }}</span>
+          <span class="section-arrow">{{ expandedSection === 'finished' ? '▼' : '▶' }}</span>
         </div>
-        <div class="book-stats">
-          <span class="book-minutes">{{ getBookMinutes(book.id) }}分钟</span>
-          <button class="btn-icon-small danger" @click="deleteBook(book)">✕</button>
-        </div>
+        <transition name="fade">
+          <div v-if="expandedSection === 'finished'" class="section-body">
+            <div v-if="finishedBooks.length === 0" class="section-empty">暂无</div>
+            <div v-for="book in finishedBooks" :key="book.id" class="section-book-item">
+              <div class="sb-info">
+                <span class="sb-title">{{ book.title }}</span>
+                <span class="sb-author">{{ book.author }}</span>
+              </div>
+              <div class="sb-stats">
+                <span class="sb-minutes">{{ getBookMinutes(book.id) }}分钟</span>
+                <button class="btn-icon-small danger" @click.stop="deleteBook(book)">✕</button>
+              </div>
+            </div>
+          </div>
+        </transition>
       </div>
-    </div>
 
-    <!-- 想读 -->
-    <div v-if="wishlistBooks.length > 0" class="card">
-      <div class="card-title">⭐ 想读 ({{ wishlistBooks.length }})</div>
-      <div v-for="book in wishlistBooks" :key="book.id" class="book-item">
-        <div class="book-info">
-          <span class="book-title">{{ book.title }}</span>
-          <span class="book-author">{{ book.author }}</span>
+      <!-- 想读 -->
+      <div class="card book-section" @click="toggleSection('wishlist')">
+        <div class="section-header">
+          <span class="section-icon">⭐</span>
+          <span class="section-title">想读</span>
+          <span class="section-count">{{ wishlistBooks.length }}</span>
+          <span class="section-arrow">{{ expandedSection === 'wishlist' ? '▼' : '▶' }}</span>
         </div>
-        <div class="book-stats">
-          <button class="btn-icon-small danger" @click="deleteBook(book)">✕</button>
-        </div>
+        <transition name="fade">
+          <div v-if="expandedSection === 'wishlist'" class="section-body">
+            <div v-if="wishlistBooks.length === 0" class="section-empty">暂无</div>
+            <div v-for="book in wishlistBooks" :key="book.id" class="section-book-item">
+              <div class="sb-info">
+                <span class="sb-title">{{ book.title }}</span>
+                <span class="sb-author">{{ book.author }}</span>
+              </div>
+              <div class="sb-stats">
+                <button class="btn-icon-small danger" @click.stop="deleteBook(book)">✕</button>
+              </div>
+            </div>
+          </div>
+        </transition>
       </div>
-    </div>
-
-    <div v-if="allBooks.length === 0" class="empty-state">
-      <div class="icon">📚</div>
-      <div class="text">还没有添加书目</div>
     </div>
   </div>
 </template>
@@ -165,7 +193,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { supabase, TABLES } from '../supabase.js'
-import { getShelf, getWeeklyStats } from '../utils/weread.js'
+import { getShelf } from '../utils/weread.js'
 
 const wereadKey = ref('')
 const syncing = ref(false)
@@ -179,6 +207,7 @@ const sessionStart = ref(null)
 let bookTimer = null
 
 const newBook = ref({ title: '', author: '', status: 'reading' })
+const expandedSection = ref(null)  // 'reading' | 'finished' | 'wishlist' | null
 
 // 今日阅读思考
 const thoughts = ref([])
@@ -218,15 +247,26 @@ function getBookMinutes(bookId) {
   return Math.round((bookMinutes.value[bookId] || 0) / 60)
 }
 
-function thoughtBook(id) {
-  if (!id) return ''
-  const b = allBooks.value.find(x => x.id === id)
-  return b ? b.title : ''
-}
-
 function formatTime(dateStr) {
+  if (!dateStr) return ''
   const d = new Date(dateStr)
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function toggleSection(section) {
+  expandedSection.value = expandedSection.value === section ? null : section
+}
+
+function selectAndStart(book) {
+  activeBookId.value = book.id
+  activeBook.value = book
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+function startTimerForBook(book) {
+  activeBookId.value = book.id
+  activeBook.value = book
+  startReading()
 }
 
 async function loadBooks() {
@@ -239,7 +279,7 @@ async function loadBooks() {
 async function loadReadingMinutes() {
   try {
     const { data } = await supabase.from(TABLES.READING_SESSIONS).select('book_id, duration, created_at')
-    if (data) {
+    if (data && data.length > 0) {
       const map = {}
       const todayStr = new Date().toISOString().split('T')[0]
       const weekStart = new Date()
@@ -269,8 +309,20 @@ async function loadReadingMinutes() {
       weekMinutes.value = Math.round(weekTotal / 60)
       monthMinutes.value = Math.round(monthTotal / 60)
       streakDays.value = computeStreak(days)
+    } else {
+      // 没有数据也显示 0
+      todayMinutes.value = 0
+      weekMinutes.value = 0
+      monthMinutes.value = 0
+      streakDays.value = 0
     }
-  } catch (e) { console.warn(e) }
+  } catch (e) {
+    console.warn('加载阅读时长失败', e)
+    todayMinutes.value = 0
+    weekMinutes.value = 0
+    monthMinutes.value = 0
+    streakDays.value = 0
+  }
 }
 
 function computeStreak(days) {
@@ -374,7 +426,6 @@ async function stopReading() {
   const elapsed = currentSession.value
 
   if (elapsed > 10 && activeBook.value) {
-    const todayStr = new Date().toISOString().split('T')[0]
     try {
       await supabase.from(TABLES.READING_SESSIONS).insert({
         book_id: activeBook.value.id,
@@ -412,7 +463,7 @@ async function syncFromWeRead() {
         }
       }
       loadBooks()
-      alert('同步成功！')
+      alert(`同步成功！从微信读书导入了 ${books.length} 本书`)
     }
   } catch (e) {
     alert('同步失败，请检查 API Key')
@@ -440,30 +491,26 @@ onUnmounted(() => {
   gap: 6px;
 }
 
-.card-subtitle {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-bottom: 12px;
-  margin-top: -8px;
-}
-
+/* 统计卡片 */
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 8px;
+  margin-bottom: 12px;
 }
 
 .stat-card {
   background: var(--bg-warm);
   border-radius: var(--radius-sm);
-  padding: 12px;
+  padding: 12px 8px;
   text-align: center;
 }
 
 .stat-value {
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 700;
   color: var(--primary-dark);
+  font-variant-numeric: tabular-nums;
 }
 
 .stat-unit {
@@ -479,19 +526,31 @@ onUnmounted(() => {
   margin-top: 2px;
 }
 
+.sync-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sync-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
 /* 阅读计时 */
 .reading-timer {
   text-align: center;
-  padding: 12px 0;
+  padding: 10px 0;
 }
 
 .timer-display {
-  font-size: 36px;
+  font-size: 40px;
   font-weight: 700;
   color: var(--primary-dark);
   font-variant-numeric: tabular-nums;
-  letter-spacing: 2px;
-  margin-bottom: 12px;
+  letter-spacing: 3px;
+  margin-bottom: 10px;
   font-family: var(--font-serif);
 }
 
@@ -501,50 +560,174 @@ onUnmounted(() => {
   gap: 10px;
 }
 
-/* 今日思考 */
-.thought-list {
-  margin-top: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+/* 选择书目 */
+.book-select-row .select {
+  padding: 12px 14px;
+  font-size: 15px;
 }
 
-.thought-item {
-  padding: 10px 12px;
+/* 今日思考 */
+.thought-book-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.thought-mini-list {
+  margin-top: 10px;
+}
+
+.thought-mini-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
   background: var(--bg-warm);
   border-radius: var(--radius-sm);
+  margin-top: 6px;
   border-left: 3px solid var(--accent-yellow);
 }
 
-.thought-meta {
-  display: flex;
-  align-items: center;
-  margin-bottom: 4px;
-}
-
-.thought-time {
+.thought-mini-time {
   font-size: 11px;
   color: var(--text-muted);
+  white-space: nowrap;
+  min-width: 40px;
+  padding-top: 2px;
+}
+
+.thought-mini-text {
   flex: 1;
-}
-
-.thought-book {
-  font-size: 11px;
-  color: var(--accent-blue);
-  margin-bottom: 4px;
-}
-
-.thought-content {
   font-size: 13px;
   color: var(--text-primary);
   line-height: 1.6;
-  text-indent: 0;
-  white-space: pre-wrap;
+}
+
+/* 添加书目 */
+.add-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.add-row:last-child {
+  margin-bottom: 0;
+}
+
+/* 可展开书目分组 */
+.book-section-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 16px 80px;
+}
+
+.book-section {
+  padding: 0;
+  overflow: hidden;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.section-header:active {
+  background: var(--bg-warm);
+}
+
+.section-icon {
+  font-size: 20px;
+}
+
+.section-title {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.section-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-warm);
+  padding: 2px 10px;
+  border-radius: 10px;
+}
+
+.section-arrow {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.section-body {
+  padding: 0 16px 12px;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 8px;
+}
+
+.section-empty {
+  text-align: center;
+  padding: 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.section-book-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.section-book-item:last-child {
+  border-bottom: none;
+}
+
+.sb-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.sb-title {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sb-author {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.sb-stats {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.sb-minutes {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .btn-icon-small {
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   border: none;
   border-radius: 50%;
   background: transparent;
@@ -560,53 +743,9 @@ onUnmounted(() => {
   color: var(--danger-color);
 }
 
-.add-book-row {
-  display: flex;
-  gap: 8px;
-}
-
-.book-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.book-item:last-child {
-  border-bottom: none;
-}
-
-.book-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1;
-  min-width: 0;
-}
-
-.book-title {
-  font-size: 14px;
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.book-author {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.book-stats {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.book-minutes {
-  font-size: 12px;
-  color: var(--text-secondary);
-  white-space: nowrap;
+@media (max-width: 480px) {
+  .stat-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 </style>
