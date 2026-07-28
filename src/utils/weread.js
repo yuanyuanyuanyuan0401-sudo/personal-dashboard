@@ -1,36 +1,32 @@
 /**
- * 微信读书 API 客户端
- * 通过官方 Skills API Key 读取用户的阅读数据
+ * 微信读书 API 客户端（通过 Vercel 代理绕开 CORS）
  */
 
-const WEREAD_API_GATEWAY = 'https://i.weread.qq.com/api/agent/gateway'
+const PROXY_URL = '/api/weread'
 
 /**
- * 调用微信读书官方 API
- * @param {string} apiKey - 用户在 weread.qq.com/r/weread-skills 获取的 API Key
- * @param {string} apiName - 接口名称
- * @param {object} params - 请求参数
+ * 调用微信读书 API（通过我们自己的 Vercel 代理）
  */
 async function callWereadAPI(apiKey, apiName, params = {}) {
   if (!apiKey) {
     throw new Error('请先在设置中配置微信读书 API Key')
   }
 
-  const response = await fetch(WEREAD_API_GATEWAY, {
+  const response = await fetch(PROXY_URL, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      api_name: apiName,
-      skill_version: '1.0.4',
-      ...params,
+      apiKey,
+      apiName,
+      params,
     }),
   })
 
   if (!response.ok) {
-    throw new Error(`API 请求失败: ${response.status}`)
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.error || `API 请求失败: ${response.status}`)
   }
 
   return response.json()
