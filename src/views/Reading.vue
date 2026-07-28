@@ -53,9 +53,12 @@
       </div>
     </div>
 
-    <!-- 阅读计时（有选择书籍时显示） -->
+    <!-- 当前在读书目（自动从微信读书获取） -->
     <div class="card" v-if="activeBook">
-      <div class="card-title">📖 当前阅读：<strong>{{ activeBook.title }}</strong></div>
+      <div class="card-title">
+        📖 当前阅读：<strong>{{ activeBook.title }}</strong>
+        <span v-if="activeBook.author" class="book-author-inline">{{ activeBook.author }}</span>
+      </div>
       <div class="reading-timer">
         <div class="timer-display">{{ readingFormattedTime }}</div>
         <div class="timer-actions">
@@ -63,16 +66,19 @@
           <button v-if="readingActive" class="btn btn-danger" @click="stopReading">⏹ 结束阅读</button>
         </div>
       </div>
+      <div v-if="!activeBook.external_id" class="auto-sync-hint">
+        点击「同步微信读书」自动获取最新在读
+      </div>
     </div>
-
-    <!-- 选择当前阅读书目 -->
-    <div class="card">
-      <div class="card-title">📚 选择在读</div>
-      <div class="book-select-row">
-        <select v-model="activeBookId" class="select" @change="updateActiveBook">
-          <option :value="null">— 选择一本书开始计时 —</option>
-          <option v-for="b in readingBooks" :key="b.id" :value="b.id">{{ b.title }}</option>
-        </select>
+    <div v-else class="card">
+      <div class="card-title">📖 当前阅读</div>
+      <div class="card-subtitle" style="text-align:center;color:var(--text-muted);padding:12px 0;">
+        <span v-if="readingBooks.length > 0">
+          在书目列表中点击 🍅 开始阅读，或同步微信读书
+        </span>
+        <span v-else>
+          暂无阅读书目，先添加或同步微信读书
+        </span>
       </div>
     </div>
 
@@ -530,53 +536,69 @@ async function syncFromWeRead() {
       loadBooks()
     }
 
-    // 2. 同步每日阅读时长
-    try {
-      const detail = await getReadDataDetail(wereadKey.value, 'monthly')
-      console.log('微信读书阅读数据:', detail)
+      // 2. 同步每日阅读时长
+      try {
+        const detail = await getReadDataDetail(wereadKey.value, 'monthly')
+        console.log('微信读书阅读数据:', detail)
 
-      const dailyMinutes = parseReadTimes(detail?.readTimes || {})
-      console.log('每日分钟数:', dailyMinutes)
+        const dailyMinutes = parseReadTimes(detail?.readTimes || {})
+        console.log('每日分钟数:', dailyMinutes)
 
-      const days = Object.entries(dailyMinutes)
-      if (days.length > 0) {
-        for (const [date, minutes] of days) {
-          if (minutes > 0) {
-            const { error } = await supabase.from(TABLES.READING_DAILY_STATS).upsert({
-              date,
-              total_minutes: minutes,
-              source: 'weread',
-              updated_at: new Date().toISOString(),
-            }, { onConflict: 'date' })
-            if (!error) savedDays++
+        const days = Object.entries(dailyMinutes)
+        if (days.length > 0) {
+          for (const [date, minutes] of days) {
+            if (minutes > 0) {
+              const { error } = await supabase.from(TABLES.READING_DAILY_STATS).upsert({
+                date,
+                total_minutes: minutes,
+                source: 'weread',
+                updated_at: new Date().toISOString(),
+              }, { onConflict: 'date' })
+              if (!error) savedDays++
+            }
+          }
+        }
+
+        // 同步最近阅读的书的封面
+        if (detail?.readLongest && Array.isArray(detail.readLongest)) {
+          for (const item of detail.readLongest) {
+            if (!item.book || !item.book.title) continue
+            const exists = allBooks.value.find(b => b.title === item.book.title)
+            if (exists && item.book.cover && !exists.cover) {
+              await supabase.from(TABLES.READING_BOOKS)
+                .update({ cover: item.book.cover })
+                .eq('id', exists.id)
+            }
+          }
+        }
+
+        await saveLastSync()
+        loadReadingMinutes()
+        weReadConnected.value = true
+        loadBooks()
+      } catch (e) {
+        console.warn('同步阅读时长失败', e)
+        await saveLastSync()
+        weReadConnected.value = true
+      }
+
+      // 3. 自动设置最新阅读的书为当前在读
+      if (books.length > 0) {
+        // 微信读书书架上的书按 readUpdateTime 排序，最新的排在最前面
+        const sortedBooks = [...books].filter(b => !b.finishReading).sort((a, b) => (b.readUpdateTime || 0) - (a.readUpdateTime || 0))
+        if (sortedBooks.length > 0) {
+          const recentTitle = sortedBooks[0].title
+          // 在 allBooks 里找到对应的书
+          const matched = allBooks.value.find(b => b.title === recentTitle)
+          if (matched) {
+            activeBookId.value = matched.id
+            activeBook.value = matched
           }
         }
       }
 
-      // 同步最近阅读的书的封面
-      if (detail?.readLongest && Array.isArray(detail.readLongest)) {
-        for (const item of detail.readLongest) {
-          if (!item.book || !item.book.title) continue
-          const exists = allBooks.value.find(b => b.title === item.book.title)
-          if (exists && item.book.cover && !exists.cover) {
-            await supabase.from(TABLES.READING_BOOKS)
-              .update({ cover: item.book.cover })
-              .eq('id', exists.id)
-          }
-        }
-      }
-
-      await saveLastSync()
-      loadReadingMinutes()
-      weReadConnected.value = true
-      loadBooks()
-    } catch (e) {
-      console.warn('同步阅读时长失败', e)
-      await saveLastSync()
-      weReadConnected.value = true
-    }
-
-    alert(`同步成功！导入了 ${books.length} 本书，保存了 ${savedDays} 天的阅读时长。`)
+      const savedMsg = savedDays > 0 ? `，保存了 ${savedDays} 天的阅读时长` : ''
+      alert(`同步成功！导入了 ${books.length} 本书${savedMsg}`)
   } catch (e) {
     alert('同步失败：' + e.message + '。请检查 API Key 是否正确')
     console.error(e)
@@ -718,6 +740,20 @@ onUnmounted(() => {
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
+}
+
+.book-author-inline {
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--text-muted);
+  margin-left: 8px;
+}
+
+.auto-sync-hint {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 0;
 }
 
 /* 阅读计时 */
