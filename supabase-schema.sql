@@ -144,6 +144,28 @@ CREATE TABLE IF NOT EXISTS reading_reflections (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 每日阅读思考（随时记录的短想法）
+CREATE TABLE IF NOT EXISTS reading_daily_thoughts (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  date DATE NOT NULL,
+  book_id UUID REFERENCES reading_books(id) ON DELETE SET NULL,
+  content TEXT NOT NULL,
+  start_page INTEGER,
+  end_page INTEGER,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 每日阅读时长统计（从微信读书同步）
+CREATE TABLE IF NOT EXISTS reading_daily_stats (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  date DATE NOT NULL UNIQUE,
+  total_minutes INTEGER DEFAULT 0,
+  sessions_count INTEGER DEFAULT 0,
+  books JSONB,                        -- [{bookId, title, cover, minutes}]
+  source TEXT DEFAULT 'manual',      -- manual / weread
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- ==========================================================================
 -- 5. 碎碎念模块
 -- ==========================================================================
@@ -190,6 +212,8 @@ CREATE INDEX IF NOT EXISTS idx_sports_date ON sports(date);
 CREATE INDEX IF NOT EXISTS idx_books_status ON reading_books(status);
 CREATE INDEX IF NOT EXISTS idx_snippets_created ON snippets(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_gratitudes_date ON gratitudes(date);
+CREATE INDEX IF NOT EXISTS idx_reading_thoughts_date ON reading_daily_thoughts(date DESC);
+CREATE INDEX IF NOT EXISTS idx_reading_stats_date ON reading_daily_stats(date DESC);
 
 -- ==========================================================================
 -- RLS（行级安全 - 单用户场景，全部允许）
@@ -205,6 +229,8 @@ ALTER TABLE reading_books ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reading_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reading_notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reading_reflections ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reading_daily_thoughts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reading_daily_stats ENABLE ROW LEVEL SECURITY;
 ALTER TABLE snippets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE gratitudes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE settings ENABLE ROW LEVEL SECURITY;
@@ -242,6 +268,12 @@ CREATE POLICY "Allow all" ON reading_notes FOR ALL USING (true) WITH CHECK (true
 
 DROP POLICY IF EXISTS "Allow all" ON reading_reflections;
 CREATE POLICY "Allow all" ON reading_reflections FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow all" ON reading_daily_thoughts;
+CREATE POLICY "Allow all" ON reading_daily_thoughts FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow all" ON reading_daily_stats;
+CREATE POLICY "Allow all" ON reading_daily_stats FOR ALL USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Allow all" ON snippets;
 CREATE POLICY "Allow all" ON snippets FOR ALL USING (true) WITH CHECK (true);

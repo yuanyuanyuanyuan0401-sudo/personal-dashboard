@@ -65,8 +65,22 @@
             <input v-model="gratitude3" class="input" placeholder="第3件好事..." />
           </div>
         </div>
-        <input v-model="emotions" class="input" placeholder="今日情绪关键词（逗号分隔，如：平静，充实，感恩）" style="margin-top:10px;" />
-        <textarea v-model="gratitudeExtra" class="textarea" placeholder="想说的其他话（可选）" rows="3" style="margin-top:8px;"></textarea>
+        <div class="mood-section">
+          <div class="mood-label">今天心情怎样？</div>
+          <div class="mood-grid">
+            <button
+              v-for="m in moodOptions"
+              :key="m.id"
+              :class="['mood-btn', { active: selectedMoods.includes(m.id) }]"
+              @click="toggleMood(m.id)"
+              :title="m.name"
+            >
+              <span class="mood-emoji">{{ m.emoji }}</span>
+              <span class="mood-name">{{ m.name }}</span>
+            </button>
+          </div>
+        </div>
+        <textarea v-model="gratitudeExtra" class="textarea" placeholder="想说的其他话（可选）" rows="3" style="margin-top:10px;"></textarea>
         <button class="btn btn-primary btn-block" @click="saveGratitude" :disabled="!gratitude1" style="margin-top:10px;">保存日记</button>
       </div>
 
@@ -91,9 +105,13 @@
               <span class="gratitude-text">{{ g.item3 }}</span>
             </div>
           </div>
-          <div v-if="g.emotions" class="emotions-row">
-            <span class="er-label">情绪：</span>
-            <span v-for="e in g.emotions.split(/[,，]/)" :key="e" class="tag tag-rose">{{ e.trim() }}</span>
+          <div v-if="g.emotions" class="emotions-display">
+            <span
+              v-for="moodId in parseMoods(g.emotions)"
+              :key="moodId"
+              class="emotion-emoji"
+              :title="getMoodName(moodId)"
+            >{{ getMoodEmoji(moodId) }}</span>
           </div>
           <div v-if="g.extra" class="diary-extra">{{ g.extra }}</div>
         </div>
@@ -201,9 +219,46 @@ const gratitudeDate = ref(new Date().toISOString().split('T')[0])
 const gratitude1 = ref('')
 const gratitude2 = ref('')
 const gratitude3 = ref('')
-const emotions = ref('')
+const selectedMoods = ref([])
 const gratitudeExtra = ref('')
 const gratitudes = ref([])
+
+// 心情选项（Suki 风格）
+const moodOptions = [
+  { id: 'happy', emoji: '😺', name: '开心' },
+  { id: 'love', emoji: '😻', name: '温暖' },
+  { id: 'calm', emoji: '😌', name: '平静' },
+  { id: 'grateful', emoji: '🥰', name: '感恩' },
+  { id: 'tired', emoji: '😪', name: '疲惫' },
+  { id: 'focus', emoji: '😎', name: '专注' },
+  { id: 'expect', emoji: '🤩', name: '期待' },
+  { id: 'sad', emoji: '😿', name: '难过' },
+  { id: 'anxious', emoji: '😰', name: '焦虑' },
+  { id: 'angry', emoji: '😾', name: '烦躁' },
+  { id: 'sleep', emoji: '😴', name: '嗜睡' },
+  { id: 'heal', emoji: '🌸', name: '治愈' },
+]
+
+function toggleMood(id) {
+  const idx = selectedMoods.value.indexOf(id)
+  if (idx >= 0) selectedMoods.value.splice(idx, 1)
+  else selectedMoods.value.push(id)
+}
+
+function getMoodEmoji(id) {
+  const m = moodOptions.find(x => x.id === id)
+  return m ? m.emoji : '😶'
+}
+
+function getMoodName(id) {
+  const m = moodOptions.find(x => x.id === id)
+  return m ? m.name : ''
+}
+
+function parseMoods(str) {
+  if (!str) return []
+  return str.split(/[,，]/).map(s => s.trim()).filter(Boolean)
+}
 
 const snippetHeatData = computed(() => {
   const map = {}
@@ -301,7 +356,7 @@ async function saveGratitude() {
       item1: gratitude1.value,
       item2: gratitude2.value,
       item3: gratitude3.value,
-      emotions: emotions.value,
+      emotions: selectedMoods.value.join(','),
       extra: gratitudeExtra.value,
     }, { onConflict: 'date' }).select()
     if (data) {
@@ -311,7 +366,7 @@ async function saveGratitude() {
       gratitude1.value = ''
       gratitude2.value = ''
       gratitude3.value = ''
-      emotions.value = ''
+      selectedMoods.value = []
       gratitudeExtra.value = ''
     }
   } catch (e) { console.error('保存失败', e) }
@@ -430,6 +485,83 @@ onMounted(loadData)
 .er-label {
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* 心情选择器 */
+.mood-section {
+  margin-top: 12px;
+}
+
+.mood-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.mood-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+}
+
+.mood-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+  border: 1.5px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--card-bg);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mood-btn:active {
+  transform: scale(0.95);
+}
+
+.mood-btn.active {
+  background: var(--primary-bg);
+  border-color: var(--primary-light);
+  box-shadow: 0 0 0 2px rgba(122, 148, 118, 0.15);
+}
+
+.mood-emoji {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.mood-name {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.mood-btn.active .mood-name {
+  color: var(--primary-dark);
+  font-weight: 500;
+}
+
+/* 心情显示 */
+.emotions-display {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-soft);
+}
+
+.emotion-emoji {
+  font-size: 22px;
+  line-height: 1;
+  cursor: help;
+  transition: transform 0.15s;
+}
+
+.emotion-emoji:active {
+  transform: scale(1.2);
 }
 
 .diary-item {

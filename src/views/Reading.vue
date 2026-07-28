@@ -2,7 +2,10 @@
   <div class="reading-page">
     <div class="page-header">
       <h1 class="page-title">阅读</h1>
-      <router-link to="/reading/reflections" class="btn btn-secondary btn-sm">💡 思考</router-link>
+      <div class="header-actions">
+        <router-link to="/reading/reflections" class="btn btn-secondary btn-sm">💡 思考</router-link>
+        <router-link to="/reading/stats" class="btn btn-secondary btn-sm">📊 统计</router-link>
+      </div>
     </div>
 
     <!-- 触动瞬间 -->
@@ -23,17 +26,25 @@
     <div v-else>
       <div class="card">
         <div class="card-title">🔗 微信读书</div>
-        <div class="weread-stats">
-          <div class="ws-item">
-            <div class="ws-value">{{ weeklyMinutes }}</div>
-            <div class="ws-label">本周阅读(分钟)</div>
+        <div class="stat-grid">
+          <div class="stat-card">
+            <div class="stat-value">{{ todayMinutes }}<span class="stat-unit">m</span></div>
+            <div class="stat-label">今日阅读</div>
           </div>
-          <div class="ws-item">
-            <div class="ws-value">{{ streakDays }}</div>
-            <div class="ws-label">连续天数</div>
+          <div class="stat-card">
+            <div class="stat-value">{{ weekMinutes }}<span class="stat-unit">m</span></div>
+            <div class="stat-label">本周阅读</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">{{ monthMinutes }}<span class="stat-unit">m</span></div>
+            <div class="stat-label">本月阅读</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">{{ streakDays }}</div>
+            <div class="stat-label">连续天数</div>
           </div>
         </div>
-        <button class="btn btn-secondary btn-block" @click="syncFromWeRead" :disabled="syncing">
+        <button class="btn btn-secondary btn-block" @click="syncFromWeRead" :disabled="syncing" style="margin-top:12px;">
           {{ syncing ? '同步中...' : '🔄 同步微信读书' }}
         </button>
       </div>
@@ -47,6 +58,29 @@
         <div class="timer-actions">
           <button v-if="!readingActive" class="btn btn-primary" @click="startReading">开始阅读</button>
           <button v-if="readingActive" class="btn btn-danger" @click="stopReading">结束阅读</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 今日阅读思考 -->
+    <div class="card">
+      <div class="card-title">✍️ 今日阅读思考</div>
+      <div class="card-subtitle">记录一闪而过的想法</div>
+      <select v-model="thoughtBookId" class="select" style="margin-bottom:8px;">
+        <option :value="null">不关联书</option>
+        <option v-for="b in readingBooks" :key="b.id" :value="b.id">{{ b.title }}</option>
+      </select>
+      <textarea v-model="thoughtContent" class="textarea" placeholder="刚刚想到的..." rows="2"></textarea>
+      <button class="btn btn-primary btn-block" @click="saveThought" :disabled="!thoughtContent" style="margin-top:8px;">记下想法</button>
+
+      <div v-if="todayThoughts.length > 0" class="thought-list">
+        <div v-for="t in todayThoughts" :key="t.id" class="thought-item">
+          <div class="thought-meta">
+            <span class="thought-time">{{ formatTime(t.created_at) }}</span>
+            <button class="btn-icon-small danger" @click="deleteThought(t)">✕</button>
+          </div>
+          <div v-if="thoughtBook(t.book_id)" class="thought-book">📖 {{ thoughtBook(t.book_id) }}</div>
+          <div class="thought-content">{{ t.content }}</div>
         </div>
       </div>
     </div>
@@ -146,6 +180,12 @@ let bookTimer = null
 
 const newBook = ref({ title: '', author: '', status: 'reading' })
 
+// 今日阅读思考
+const thoughts = ref([])
+const todayThoughts = ref([])
+const thoughtContent = ref('')
+const thoughtBookId = ref(null)
+
 const touchMoments = [
   '读书，是与灵魂的一次对话。',
   '书卷里，藏着更广阔的世界。',
@@ -160,7 +200,9 @@ const readingBooks = computed(() => allBooks.value.filter(b => b.status === 'rea
 const finishedBooks = computed(() => allBooks.value.filter(b => b.status === 'finished'))
 const wishlistBooks = computed(() => allBooks.value.filter(b => b.status === 'wishlist'))
 
-const weeklyMinutes = ref(0)
+const todayMinutes = ref(0)
+const weekMinutes = ref(0)
+const monthMinutes = ref(0)
 const streakDays = ref(0)
 
 const readingFormattedTime = computed(() => {
@@ -176,6 +218,17 @@ function getBookMinutes(bookId) {
   return Math.round((bookMinutes.value[bookId] || 0) / 60)
 }
 
+function thoughtBook(id) {
+  if (!id) return ''
+  const b = allBooks.value.find(x => x.id === id)
+  return b ? b.title : ''
+}
+
+function formatTime(dateStr) {
+  const d = new Date(dateStr)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
 async function loadBooks() {
   try {
     const { data } = await supabase.from(TABLES.READING_BOOKS).select('*').order('created_at', { ascending: false })
@@ -185,15 +238,53 @@ async function loadBooks() {
 
 async function loadReadingMinutes() {
   try {
-    const { data } = await supabase.from(TABLES.READING_SESSIONS).select('book_id, duration')
+    const { data } = await supabase.from(TABLES.READING_SESSIONS).select('book_id, duration, created_at')
     if (data) {
       const map = {}
+      const todayStr = new Date().toISOString().split('T')[0]
+      const weekStart = new Date()
+      weekStart.setDate(weekStart.getDate() - 6)
+      weekStart.setHours(0, 0, 0, 0)
+      const monthStart = new Date()
+      monthStart.setDate(1)
+      monthStart.setHours(0, 0, 0, 0)
+
+      let todayTotal = 0, weekTotal = 0, monthTotal = 0
+      const days = new Set()
+
       data.forEach(s => {
+        const d = new Date(s.created_at)
+        const dateStr = s.created_at.split('T')[0]
         map[s.book_id] = (map[s.book_id] || 0) + (s.duration || 0)
+        if (dateStr === todayStr) todayTotal += s.duration
+        if (d >= weekStart) weekTotal += s.duration
+        if (d >= monthStart) {
+          monthTotal += s.duration
+          days.add(dateStr)
+        }
       })
+
       bookMinutes.value = map
+      todayMinutes.value = Math.round(todayTotal / 60)
+      weekMinutes.value = Math.round(weekTotal / 60)
+      monthMinutes.value = Math.round(monthTotal / 60)
+      streakDays.value = computeStreak(days)
     }
   } catch (e) { console.warn(e) }
+}
+
+function computeStreak(days) {
+  if (days.size === 0) return 0
+  const sorted = [...days].sort().reverse()
+  let streak = 0
+  const today = new Date()
+  for (let i = 0; i < sorted.length; i++) {
+    const expected = new Date(today)
+    expected.setDate(today.getDate() - i)
+    if (sorted[i] === expected.toISOString().split('T')[0]) streak++
+    else break
+  }
+  return streak
 }
 
 async function loadSettings() {
@@ -203,19 +294,40 @@ async function loadSettings() {
   } catch (e) { /* not set */ }
 }
 
-async function loadWeeklyStats() {
+async function loadThoughts() {
   try {
-    const weekStart = new Date()
-    weekStart.setDate(weekStart.getDate() - 6)
-    weekStart.setHours(0, 0, 0, 0)
+    const todayStr = new Date().toISOString().split('T')[0]
     const { data } = await supabase
-      .from(TABLES.READING_SESSIONS)
+      .from(TABLES.READING_DAILY_THOUGHTS)
       .select('*')
-      .gte('created_at', weekStart.toISOString())
-    if (data) {
-      weeklyMinutes.value = Math.round(data.reduce((s, r) => s + (r.duration || 0), 0) / 60)
-    }
+      .eq('date', todayStr)
+      .order('created_at', { ascending: false })
+    todayThoughts.value = data || []
   } catch (e) { console.warn(e) }
+}
+
+async function saveThought() {
+  if (!thoughtContent.value.trim()) return
+  try {
+    const todayStr = new Date().toISOString().split('T')[0]
+    const { data } = await supabase.from(TABLES.READING_DAILY_THOUGHTS).insert({
+      date: todayStr,
+      book_id: thoughtBookId.value,
+      content: thoughtContent.value,
+    }).select()
+    if (data) {
+      todayThoughts.value.unshift(data[0])
+      thoughtContent.value = ''
+    }
+  } catch (e) { console.error('保存失败', e) }
+}
+
+async function deleteThought(t) {
+  if (!confirm('删除这条想法？')) return
+  try {
+    await supabase.from(TABLES.READING_DAILY_THOUGHTS).delete().eq('id', t.id)
+    todayThoughts.value = todayThoughts.value.filter(x => x.id !== t.id)
+  } catch (e) { console.error(e) }
 }
 
 async function addBook() {
@@ -262,13 +374,13 @@ async function stopReading() {
   const elapsed = currentSession.value
 
   if (elapsed > 10 && activeBook.value) {
+    const todayStr = new Date().toISOString().split('T')[0]
     try {
       await supabase.from(TABLES.READING_SESSIONS).insert({
         book_id: activeBook.value.id,
         duration: elapsed,
       })
       loadReadingMinutes()
-      loadWeeklyStats()
     } catch (e) { console.error(e) }
   }
 
@@ -288,9 +400,15 @@ async function syncFromWeRead() {
           await supabase.from(TABLES.READING_BOOKS).insert({
             title: book.title,
             author: book.author || '',
-            status: 'reading',
+            cover: book.cover || '',
+            status: book.finishReading ? 'finished' : 'reading',
             source: 'weread',
+            external_id: book.bookId,
           })
+        } else if (book.cover && !exists.cover) {
+          await supabase.from(TABLES.READING_BOOKS)
+            .update({ cover: book.cover })
+            .eq('id', exists.id)
         }
       }
       loadBooks()
@@ -308,7 +426,7 @@ onMounted(() => {
   loadBooks()
   loadReadingMinutes()
   loadSettings()
-  loadWeeklyStats()
+  loadThoughts()
 })
 
 onUnmounted(() => {
@@ -317,29 +435,51 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.weread-stats {
+.header-actions {
   display: flex;
-  gap: 24px;
+  gap: 6px;
+}
+
+.card-subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
   margin-bottom: 12px;
+  margin-top: -8px;
 }
 
-.ws-item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
 }
 
-.ws-value {
+.stat-card {
+  background: var(--bg-warm);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  text-align: center;
+}
+
+.stat-value {
   font-size: 22px;
   font-weight: 700;
   color: var(--primary-dark);
 }
 
-.ws-label {
-  font-size: 12px;
+.stat-unit {
+  font-size: 11px;
+  font-weight: 400;
   color: var(--text-muted);
+  margin-left: 2px;
 }
 
+.stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* 阅读计时 */
 .reading-timer {
   text-align: center;
   padding: 12px 0;
@@ -359,6 +499,65 @@ onUnmounted(() => {
   display: flex;
   justify-content: center;
   gap: 10px;
+}
+
+/* 今日思考 */
+.thought-list {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.thought-item {
+  padding: 10px 12px;
+  background: var(--bg-warm);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--accent-yellow);
+}
+
+.thought-meta {
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.thought-time {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex: 1;
+}
+
+.thought-book {
+  font-size: 11px;
+  color: var(--accent-blue);
+  margin-bottom: 4px;
+}
+
+.thought-content {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.6;
+  text-indent: 0;
+  white-space: pre-wrap;
+}
+
+.btn-icon-small {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+
+.btn-icon-small.danger {
+  color: var(--danger-color);
 }
 
 .add-book-row {
@@ -409,22 +608,5 @@ onUnmounted(() => {
   font-size: 12px;
   color: var(--text-secondary);
   white-space: nowrap;
-}
-
-.btn-icon-small {
-  width: 26px;
-  height: 26px;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.btn-icon-small.danger {
-  color: var(--danger-color);
 }
 </style>

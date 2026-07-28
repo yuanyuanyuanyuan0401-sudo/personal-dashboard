@@ -16,6 +16,7 @@ const routes = [
   // 阅读
   { path: '/reading', name: 'reading', component: () => import('../views/Reading.vue') },
   { path: '/reading/reflections', name: 'reading-reflections', component: () => import('../views/ReadingReflections.vue') },
+  { path: '/reading/stats', name: 'reading-stats', component: () => import('../views/ReadingStats.vue') },
   // 碎碎念
   { path: '/snippets', name: 'snippets', component: () => import('../views/Snippets.vue') },
   { path: '/snippets/calendar', name: 'snippets-calendar', component: () => import('../views/SnippetsCalendar.vue') },

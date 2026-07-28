@@ -33,7 +33,7 @@ async function callWereadAPI(apiKey, apiName, params = {}) {
 }
 
 /**
- * 获取书架列表（最近阅读）
+ * 获取书架列表
  */
 export async function getShelf(apiKey) {
   return callWereadAPI(apiKey, '/shelf/sync', { count: 50 })
@@ -51,6 +51,20 @@ export async function getWeeklyStats(apiKey) {
  */
 export async function getOverallStats(apiKey) {
   return callWereadAPI(apiKey, '/readdata/summary', { mode: 'annually' })
+}
+
+/**
+ * 获取每日阅读时长
+ */
+export async function getDailyReadTime(apiKey, date) {
+  return callWereadAPI(apiKey, '/readdata/daily', { date })
+}
+
+/**
+ * 获取阅读历史（按天）
+ */
+export async function getReadHistory(apiKey, year) {
+  return callWereadAPI(apiKey, '/readdata/history', { year })
 }
 
 /**

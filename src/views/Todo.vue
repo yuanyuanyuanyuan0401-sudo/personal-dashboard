@@ -12,6 +12,61 @@
       <div class="touch-moment-text">{{ touchMomentText }}</div>
     </div>
 
+    <!-- 时间环状总结 + 已完成列表 -->
+    <div class="card summary-card">
+      <div class="card-title">⏱ 今日专注总结</div>
+      <div class="ring-row">
+        <div class="ring-progress">
+          <svg width="140" height="140" viewBox="0 0 140 140">
+            <circle cx="70" cy="70" r="58" fill="none" stroke="var(--primary-bg)" stroke-width="10" />
+            <circle
+              cx="70" cy="70" r="58" fill="none"
+              stroke="var(--primary-color)" stroke-width="10"
+              stroke-linecap="round"
+              :stroke-dasharray="ringCircumference"
+              :stroke-dashoffset="ringDashoffset"
+              class="ring-circle"
+            />
+          </svg>
+          <div class="ring-text">
+            <div class="ring-value">{{ todayFocusMinutes }}</div>
+            <div class="ring-unit">分钟</div>
+            <div class="ring-label">今日专注</div>
+          </div>
+        </div>
+        <div class="ring-stats">
+          <div class="rs-item">
+            <span class="rs-num">{{ todaySessionsCount }}</span>
+            <span class="rs-label">番茄数</span>
+          </div>
+          <div class="rs-item">
+            <span class="rs-num">{{ todayCompletedCount }}</span>
+            <span class="rs-label">已完成</span>
+          </div>
+          <div class="rs-item">
+            <span class="rs-num">{{ todayPendingCount }}</span>
+            <span class="rs-label">待办</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 今日已完成 -->
+    <div v-if="todayCompleted.length > 0" class="card completed-card">
+      <div class="card-title">
+        ✅ 今日已完成
+        <span class="title-count">{{ todayCompleted.length }}</span>
+      </div>
+      <div v-for="todo in todayCompleted" :key="todo.id" class="completed-item">
+        <div class="completed-check">✓</div>
+        <div class="completed-info">
+          <div class="completed-title">{{ todo.title }}</div>
+          <div class="completed-time">{{ formatTime(todo.completed_at) }}</div>
+        </div>
+        <button class="btn-icon-small danger" @click="deleteTodo(todo)">✕</button>
+      </div>
+    </div>
+
     <!-- 番茄钟 -->
     <div class="card pomodoro-card">
       <div class="card-title">🍅 专注番茄钟</div>
@@ -156,15 +211,6 @@
       <div class="card-title">🔥 每日热力图</div>
       <HeatMap :data="heatMapData" />
     </div>
-
-    <!-- 今日专注 -->
-    <div class="card" v-if="todaySessions.length > 0">
-      <div class="card-title">今日专注</div>
-      <div class="session-stats">
-        <span>完成 <strong>{{ todaySessions.length }}</strong> 个番茄</span>
-        <span>共 <strong>{{ todayFocusMinutes }}</strong> 分钟</span>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -202,17 +248,18 @@ const todayTodos = computed(() => {
   return todos.value.filter(t => t.category === 'today' && t.due_date === today)
 })
 
-const weekTodos = computed(() => {
-  return todos.value.filter(t => t.category === 'week')
+const todayCompleted = computed(() => {
+  const todayStr = new Date().toISOString().split('T')[0]
+  return todos.value
+    .filter(t => t.completed && t.completed_at && t.completed_at.startsWith(todayStr))
+    .sort((a, b) => (b.completed_at || '').localeCompare(a.completed_at || ''))
 })
 
-const noneTodos = computed(() => {
-  return todos.value.filter(t => t.category === 'none')
-})
+const weekTodos = computed(() => todos.value.filter(t => t.category === 'week'))
 
-const checkinTodos = computed(() => {
-  return todos.value.filter(t => t.category && t.category.startsWith('checkin-'))
-})
+const noneTodos = computed(() => todos.value.filter(t => t.category === 'none'))
+
+const checkinTodos = computed(() => todos.value.filter(t => t.category && t.category.startsWith('checkin-')))
 
 const heatMapData = computed(() => {
   const completionMap = {}
@@ -223,8 +270,25 @@ const heatMapData = computed(() => {
   return completionMap
 })
 
+// 今日统计
 const todayFocusMinutes = computed(() => {
   return Math.round(todaySessions.value.reduce((s, r) => s + (r.duration || 0), 0) / 60)
+})
+
+const todaySessionsCount = computed(() => todaySessions.value.length)
+
+const todayCompletedCount = computed(() => todayCompleted.value.length)
+
+const todayPendingCount = computed(() => {
+  const todayStr = new Date().toISOString().split('T')[0]
+  return todos.value.filter(t => !t.completed && t.category === 'today' && t.due_date === todayStr).length
+})
+
+// 圆环：以 60 分钟为 100%（可设定）
+const ringCircumference = 2 * Math.PI * 58
+const ringDashoffset = computed(() => {
+  const progress = Math.min(todayFocusMinutes.value / 120, 1)  // 120分钟满
+  return ringCircumference - progress * ringCircumference
 })
 
 // 番茄钟
@@ -257,6 +321,14 @@ function formatDate(dateStr) {
   return `${d.getMonth() + 1}/${d.getDate()}`
 }
 
+function formatTime(dateStr) {
+  if (!dateStr) return ''
+  const d = new Date(dateStr)
+  const h = String(d.getHours()).padStart(2, '0')
+  const m = String(d.getMinutes()).padStart(2, '0')
+  return `${h}:${m}`
+}
+
 function getPatternLabel(pattern, days) {
   if (pattern === 'daily') return '每天'
   if (pattern === 'weekly') return '每周'
@@ -270,7 +342,7 @@ function isCheckinToday(item) {
   if (item.checkin_pattern === 'daily') return true
   if (item.checkin_pattern === 'weekly') return true
   if (item.checkin_pattern === 'specific' && item.checkin_days) {
-    const today = new Date().getDay() || 7  // 周日 getDay() = 0，转为 7
+    const today = new Date().getDay() || 7
     return item.checkin_days.includes(today)
   }
   return false
@@ -480,6 +552,151 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.title-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--primary-bg);
+  color: var(--primary-dark);
+  font-size: 12px;
+  font-weight: 600;
+  margin-left: 6px;
+}
+
+/* 时间环状总结 */
+.summary-card {
+  background: linear-gradient(135deg, var(--card-bg) 0%, var(--bg-warm) 100%);
+}
+
+.ring-row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.ring-progress {
+  position: relative;
+  width: 140px;
+  height: 140px;
+  flex-shrink: 0;
+}
+
+.ring-circle {
+  transition: stroke-dashoffset 0.6s ease;
+}
+
+.ring-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.ring-value {
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--primary-dark);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-serif);
+}
+
+.ring-unit {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.ring-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 6px;
+  letter-spacing: 1px;
+}
+
+.ring-stats {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.rs-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rs-num {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.rs-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* 完成列表 */
+.completed-card {
+  padding: 16px;
+}
+
+.completed-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.completed-item:last-child {
+  border-bottom: none;
+}
+
+.completed-check {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--primary-color);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.completed-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.completed-title {
+  font-size: 14px;
+  color: var(--text-primary);
+  text-decoration: line-through;
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.completed-time {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* 番茄钟 */
 .pomodoro-card {
   text-align: center;
 }
@@ -681,8 +898,8 @@ onUnmounted(() => {
 }
 
 .btn-icon-small {
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   border: none;
   border-radius: 50%;
   background: transparent;
@@ -691,21 +908,23 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  font-size: 12px;
 }
 
 .btn-icon-small.danger {
   color: var(--danger-color);
 }
 
-.session-stats {
-  display: flex;
-  gap: 24px;
-  font-size: 14px;
-  color: var(--text-secondary);
-}
+@media (max-width: 480px) {
+  .ring-row {
+    flex-direction: column;
+    gap: 16px;
+  }
 
-.session-stats strong {
-  color: var(--text-primary);
-  font-weight: 700;
+  .ring-stats {
+    flex-direction: row;
+    justify-content: space-around;
+    width: 100%;
+  }
 }
 </style>

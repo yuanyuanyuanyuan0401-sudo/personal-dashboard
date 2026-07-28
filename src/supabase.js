@@ -28,6 +28,8 @@ export const TABLES = {
   READING_SESSIONS: 'reading_sessions',
   READING_NOTES: 'reading_notes',
   READING_REFLECTIONS: 'reading_reflections',
+  READING_DAILY_THOUGHTS: 'reading_daily_thoughts',
+  READING_DAILY_STATS: 'reading_daily_stats',
   // 碎碎念
   SNIPPETS: 'snippets',
   GRATITUDES: 'gratitudes',

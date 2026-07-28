@@ -5,6 +5,8 @@
 
 DROP TABLE IF EXISTS gratitudes CASCADE;
 DROP TABLE IF EXISTS snippets CASCADE;
+DROP TABLE IF EXISTS reading_daily_stats CASCADE;
+DROP TABLE IF EXISTS reading_daily_thoughts CASCADE;
 DROP TABLE IF EXISTS reading_reflections CASCADE;
 DROP TABLE IF EXISTS reading_notes CASCADE;
 DROP TABLE IF EXISTS reading_sessions CASCADE;
