@@ -54,6 +54,13 @@ export async function getOverallStats(apiKey) {
 }
 
 /**
+ * 获取阅读详情（包含每日阅读时长）
+ */
+export async function getReadDataDetail(apiKey) {
+  return callWereadAPI(apiKey, '/readdata/detail', {})
+}
+
+/**
  * 获取每日阅读时长
  */
 export async function getDailyReadTime(apiKey, date) {

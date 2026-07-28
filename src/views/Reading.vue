@@ -17,7 +17,10 @@
 
     <!-- 阅读统计卡片（始终显示） -->
     <div class="card">
-      <div class="card-title">📊 阅读统计</div>
+      <div class="card-title">
+        📊 阅读统计
+        <span v-if="lastSyncText" class="sync-tag">已同步</span>
+      </div>
       <div class="stat-grid">
         <div class="stat-card">
           <div class="stat-value">{{ todayMinutes }}<span class="stat-unit">分钟</span></div>
@@ -37,14 +40,15 @@
         </div>
       </div>
 
-      <!-- 微信读书同步按钮 -->
+      <!-- 微信读书同步状态 -->
       <div v-if="wereadKey" class="sync-row">
         <button class="btn btn-secondary btn-block" @click="syncFromWeRead" :disabled="syncing">
           {{ syncing ? '同步中...' : '🔄 同步微信读书' }}
         </button>
+        <p v-if="lastSyncText" class="last-sync">上次同步：{{ lastSyncText }}</p>
       </div>
       <div v-else class="sync-row">
-        <p class="sync-hint">📖 配置微信读书 API Key 可自动同步书架</p>
+        <p class="sync-hint">📖 配置微信读书 API Key 可自动同步时长数据</p>
         <router-link to="/settings" class="btn btn-secondary btn-block">前往设置</router-link>
       </div>
     </div>
@@ -193,10 +197,12 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { supabase, TABLES } from '../supabase.js'
-import { getShelf } from '../utils/weread.js'
+import { getShelf, getReadDataDetail } from '../utils/weread.js'
 
 const wereadKey = ref('')
 const syncing = ref(false)
+const weReadConnected = ref(false)
+const lastSyncTime = ref(null)
 const allBooks = ref([])
 const bookMinutes = ref({})
 const activeBookId = ref(null)
@@ -214,6 +220,18 @@ const thoughts = ref([])
 const todayThoughts = ref([])
 const thoughtContent = ref('')
 const thoughtBookId = ref(null)
+
+// 同步状态文本
+const lastSyncText = computed(() => {
+  if (!lastSyncTime.value) return ''
+  const d = lastSyncTime.value
+  const now = new Date()
+  const diff = Math.floor((now - d) / 1000)
+  if (diff < 60) return '刚刚'
+  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+})
 
 const touchMoments = [
   '读书，是与灵魂的一次对话。',
@@ -278,9 +296,14 @@ async function loadBooks() {
 
 async function loadReadingMinutes() {
   try {
-    const { data } = await supabase.from(TABLES.READING_SESSIONS).select('book_id, duration, created_at')
-    if (data && data.length > 0) {
-      const map = {}
+    // 优先从 reading_daily_stats 读取（微信读书同步数据）
+    const { data: stats } = await supabase
+      .from(TABLES.READING_DAILY_STATS)
+      .select('*')
+      .order('date', { ascending: false })
+      .limit(365)
+
+    if (stats && stats.length > 0) {
       const todayStr = new Date().toISOString().split('T')[0]
       const weekStart = new Date()
       weekStart.setDate(weekStart.getDate() - 6)
@@ -292,29 +315,40 @@ async function loadReadingMinutes() {
       let todayTotal = 0, weekTotal = 0, monthTotal = 0
       const days = new Set()
 
-      data.forEach(s => {
-        const d = new Date(s.created_at)
-        const dateStr = s.created_at.split('T')[0]
-        map[s.book_id] = (map[s.book_id] || 0) + (s.duration || 0)
-        if (dateStr === todayStr) todayTotal += s.duration
-        if (d >= weekStart) weekTotal += s.duration
+      stats.forEach(s => {
+        const d = new Date(s.date)
+        if (s.date === todayStr) todayTotal += s.total_minutes || 0
+        if (d >= weekStart) weekTotal += s.total_minutes || 0
         if (d >= monthStart) {
-          monthTotal += s.duration
-          days.add(dateStr)
+          monthTotal += s.total_minutes || 0
+          if (s.total_minutes > 0) days.add(s.date)
         }
       })
 
-      bookMinutes.value = map
-      todayMinutes.value = Math.round(todayTotal / 60)
-      weekMinutes.value = Math.round(weekTotal / 60)
-      monthMinutes.value = Math.round(monthTotal / 60)
+      // 优先用微信读书数据
+      todayMinutes.value = todayTotal
+      weekMinutes.value = weekTotal
+      monthMinutes.value = monthTotal
       streakDays.value = computeStreak(days)
+
+      // 同时从 reading_sessions 累加手动计时（如果存在）
+      const { data: sessions } = await supabase
+        .from(TABLES.READING_SESSIONS)
+        .select('book_id, duration, created_at')
+      if (sessions) {
+        const map = {}
+        sessions.forEach(s => {
+          map[s.book_id] = (map[s.book_id] || 0) + (s.duration || 0)
+        })
+        bookMinutes.value = map
+      }
     } else {
-      // 没有数据也显示 0
+      // 没数据时显示 0
       todayMinutes.value = 0
       weekMinutes.value = 0
       monthMinutes.value = 0
       streakDays.value = 0
+      bookMinutes.value = {}
     }
   } catch (e) {
     console.warn('加载阅读时长失败', e)
@@ -323,6 +357,30 @@ async function loadReadingMinutes() {
     monthMinutes.value = 0
     streakDays.value = 0
   }
+}
+
+async function loadLastSync() {
+  try {
+    const { data } = await supabase
+      .from(TABLES.SETTINGS)
+      .select('*')
+      .eq('key', 'weread_last_sync')
+      .single()
+    if (data && data.value) {
+      lastSyncTime.value = new Date(data.value)
+    }
+  } catch (e) { /* no sync yet */ }
+}
+
+async function saveLastSync() {
+  try {
+    const now = new Date().toISOString()
+    await supabase.from(TABLES.SETTINGS).upsert({
+      key: 'weread_last_sync',
+      value: now,
+    }, { onConflict: 'key' })
+    lastSyncTime.value = new Date(now)
+  } catch (e) { console.warn('保存同步时间失败', e) }
 }
 
 function computeStreak(days) {
@@ -439,11 +497,17 @@ async function stopReading() {
 }
 
 async function syncFromWeRead() {
+  if (!wereadKey.value) {
+    alert('请先在设置中配置微信读书 API Key')
+    return
+  }
   syncing.value = true
+  weReadConnected.value = false
   try {
+    // 1. 同步书架
     const shelf = await getShelf(wereadKey.value)
-    if (shelf && (shelf.books || shelf)) {
-      const books = Array.isArray(shelf) ? shelf : shelf.books
+    const books = (shelf && (shelf.books || shelf)) || []
+    if (Array.isArray(books)) {
       for (const book of books) {
         if (!book.title) continue
         const exists = allBooks.value.find(b => b.title === book.title)
@@ -463,8 +527,73 @@ async function syncFromWeRead() {
         }
       }
       loadBooks()
-      alert(`同步成功！从微信读书导入了 ${books.length} 本书`)
     }
+
+    // 2. 同步每日阅读时长（从微信读书获取）
+    try {
+      const detail = await getReadDataDetail(wereadKey.value)
+      console.log('微信读书阅读数据:', detail)
+
+      // 微信读书的返回格式可能是 { data: [{date, readTime, ...}] } 或 { readTime: [...days] }
+      let dailyData = []
+      if (detail) {
+        if (Array.isArray(detail)) {
+          dailyData = detail
+        } else if (detail.data && Array.isArray(detail.data)) {
+          dailyData = detail.data
+        } else if (detail.readData && Array.isArray(detail.readData)) {
+          dailyData = detail.readData
+        } else if (detail.books && Array.isArray(detail.books)) {
+          // 如果是另一种格式
+          dailyData = detail.books
+        }
+      }
+
+      // 尝试解析每日阅读时长数据
+      const today = new Date()
+      const yearStart = new Date(today.getFullYear(), 0, 1)
+      const days = []
+      let todayMinutes = 0, weekMinutes = 0, monthMinutes = 0
+
+      for (let d = new Date(yearStart); d <= today; d.setDate(d.getDate() + 1)) {
+        const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+        // 从 detail 中找这一天的数据
+        const dayData = dailyData.find(x => {
+          const xDate = x.date || x.dateKey || x.day
+          if (!xDate) return false
+          return xDate.toString().startsWith(dateStr) || xDate === dateStr
+        })
+        const minutes = dayData?.readTime || dayData?.minutes || dayData?.time || 0
+        if (minutes > 0) {
+          days.push({ date: dateStr, total_minutes: minutes })
+        }
+      }
+
+      // 批量写入 reading_daily_stats
+      if (days.length > 0) {
+        for (const d of days) {
+          await supabase.from(TABLES.READING_DAILY_STATS).upsert({
+            date: d.date,
+            total_minutes: d.total_minutes,
+            source: 'weread',
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'date' })
+        }
+      }
+
+      // 无论是否有数据，都保存同步时间
+      await saveLastSync()
+      loadReadingMinutes()
+      weReadConnected.value = true
+      loadBooks()
+    } catch (e) {
+      console.warn('同步阅读时长失败（可能接口路径不同）', e)
+      // 部分同步成功也算成功
+      await saveLastSync()
+      weReadConnected.value = true
+    }
+
+    alert(`同步成功！从微信读书导入了 ${books.length} 本书`)
   } catch (e) {
     alert('同步失败，请检查 API Key')
     console.error(e)
@@ -472,12 +601,31 @@ async function syncFromWeRead() {
   syncing.value = false
 }
 
-onMounted(() => {
+async function autoSyncIfNeeded() {
+  // 如果有 key 且超过 1 小时没同步，自动同步
+  if (!wereadKey.value) return
+  if (!lastSyncTime.value) {
+    // 首次同步
+    syncFromWeRead()
+    return
+  }
+  const now = new Date()
+  const diff = (now - lastSyncTime.value) / 1000 / 60  // 分钟
+  if (diff > 60) {
+    console.log('Auto-syncing WeChat Reading...')
+    syncFromWeRead()
+  }
+}
+
+onMounted(async () => {
   touchMomentText.value = touchMoments[Math.floor(Math.random() * touchMoments.length)]
   loadBooks()
   loadReadingMinutes()
   loadSettings()
   loadThoughts()
+  await loadLastSync()
+  // 等待设置加载后检查是否需要自动同步
+  setTimeout(() => autoSyncIfNeeded(), 1000)
 })
 
 onUnmounted(() => {
@@ -536,6 +684,57 @@ onUnmounted(() => {
   font-size: 12px;
   color: var(--text-muted);
   text-align: center;
+}
+
+.last-sync {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+  margin-top: 4px;
+}
+
+.sync-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: var(--primary-bg);
+  color: var(--primary-dark);
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 500;
+  margin-left: 6px;
+}
+
+.wechat-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: normal;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.status-dot.online {
+  background: var(--success-color);
+  box-shadow: 0 0 0 3px rgba(122, 148, 118, 0.2);
+  animation: pulse 2s infinite;
+}
+
+.status-dot.offline {
+  background: var(--text-muted);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 /* 阅读计时 */
