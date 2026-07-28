@@ -197,7 +197,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { supabase, TABLES } from '../supabase.js'
-import { getShelf, getReadDataDetail } from '../utils/weread.js'
+import { getShelf, getReadDataDetail, parseReadTimes } from '../utils/weread.js'
 
 const wereadKey = ref('')
 const syncing = ref(false)
@@ -531,53 +531,40 @@ async function syncFromWeRead() {
 
     // 2. 同步每日阅读时长（从微信读书获取）
     try {
-      const detail = await getReadDataDetail(wereadKey.value)
+      // 月度数据：包含每日的阅读时长
+      const detail = await getReadDataDetail(wereadKey.value, 'monthly')
       console.log('微信读书阅读数据:', detail)
 
-      // 微信读书的返回格式可能是 { data: [{date, readTime, ...}] } 或 { readTime: [...days] }
-      let dailyData = []
-      if (detail) {
-        if (Array.isArray(detail)) {
-          dailyData = detail
-        } else if (detail.data && Array.isArray(detail.data)) {
-          dailyData = detail.data
-        } else if (detail.readData && Array.isArray(detail.readData)) {
-          dailyData = detail.readData
-        } else if (detail.books && Array.isArray(detail.books)) {
-          // 如果是另一种格式
-          dailyData = detail.books
-        }
-      }
-
-      // 尝试解析每日阅读时长数据
-      const today = new Date()
-      const yearStart = new Date(today.getFullYear(), 0, 1)
-      const days = []
-      let todayMinutes = 0, weekMinutes = 0, monthMinutes = 0
-
-      for (let d = new Date(yearStart); d <= today; d.setDate(d.getDate() + 1)) {
-        const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-        // 从 detail 中找这一天的数据
-        const dayData = dailyData.find(x => {
-          const xDate = x.date || x.dateKey || x.day
-          if (!xDate) return false
-          return xDate.toString().startsWith(dateStr) || xDate === dateStr
-        })
-        const minutes = dayData?.readTime || dayData?.minutes || dayData?.time || 0
-        if (minutes > 0) {
-          days.push({ date: dateStr, total_minutes: minutes })
-        }
-      }
+      // readTimes: { unix_timestamp: 当天阅读秒数 }
+      // 智能解析：转换为 { 'YYYY-MM-DD': minutes }
+      const dailyMinutes = parseReadTimes(detail?.readTimes || {})
+      console.log('每日分钟数:', dailyMinutes)
 
       // 批量写入 reading_daily_stats
+      const days = Object.entries(dailyMinutes)
       if (days.length > 0) {
-        for (const d of days) {
-          await supabase.from(TABLES.READING_DAILY_STATS).upsert({
-            date: d.date,
-            total_minutes: d.total_minutes,
-            source: 'weread',
-            updated_at: new Date().toISOString(),
-          }, { onConflict: 'date' })
+        for (const [date, minutes] of days) {
+          if (minutes > 0) {
+            await supabase.from(TABLES.READING_DAILY_STATS).upsert({
+              date,
+              total_minutes: minutes,
+              source: 'weread',
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'date' })
+          }
+        }
+      }
+
+      // 同步最近阅读的书的封面
+      if (detail?.readLongest && Array.isArray(detail.readLongest)) {
+        for (const item of detail.readLongest) {
+          if (!item.book || !item.book.title) continue
+          const exists = allBooks.value.find(b => b.title === item.book.title)
+          if (exists && item.book.cover && !exists.cover) {
+            await supabase.from(TABLES.READING_BOOKS)
+              .update({ cover: item.book.cover })
+              .eq('id', exists.id)
+          }
         }
       }
 
@@ -593,7 +580,7 @@ async function syncFromWeRead() {
       weReadConnected.value = true
     }
 
-    alert(`同步成功！从微信读书导入了 ${books.length} 本书`)
+    alert(`同步成功！从微信读书导入了 ${books.length} 本书，每日阅读时长已同步！`)
   } catch (e) {
     alert('同步失败，请检查 API Key')
     console.error(e)
