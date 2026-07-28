@@ -503,6 +503,7 @@ async function syncFromWeRead() {
   }
   syncing.value = true
   weReadConnected.value = false
+  let savedDays = 0
   try {
     // 1. 同步书架
     const shelf = await getShelf(wereadKey.value)
@@ -529,28 +530,25 @@ async function syncFromWeRead() {
       loadBooks()
     }
 
-    // 2. 同步每日阅读时长（从微信读书获取）
+    // 2. 同步每日阅读时长
     try {
-      // 月度数据：包含每日的阅读时长
       const detail = await getReadDataDetail(wereadKey.value, 'monthly')
       console.log('微信读书阅读数据:', detail)
 
-      // readTimes: { unix_timestamp: 当天阅读秒数 }
-      // 智能解析：转换为 { 'YYYY-MM-DD': minutes }
       const dailyMinutes = parseReadTimes(detail?.readTimes || {})
       console.log('每日分钟数:', dailyMinutes)
 
-      // 批量写入 reading_daily_stats
       const days = Object.entries(dailyMinutes)
       if (days.length > 0) {
         for (const [date, minutes] of days) {
           if (minutes > 0) {
-            await supabase.from(TABLES.READING_DAILY_STATS).upsert({
+            const { error } = await supabase.from(TABLES.READING_DAILY_STATS).upsert({
               date,
               total_minutes: minutes,
               source: 'weread',
               updated_at: new Date().toISOString(),
             }, { onConflict: 'date' })
+            if (!error) savedDays++
           }
         }
       }
@@ -568,21 +566,19 @@ async function syncFromWeRead() {
         }
       }
 
-      // 无论是否有数据，都保存同步时间
       await saveLastSync()
       loadReadingMinutes()
       weReadConnected.value = true
       loadBooks()
     } catch (e) {
-      console.warn('同步阅读时长失败（可能接口路径不同）', e)
-      // 部分同步成功也算成功
+      console.warn('同步阅读时长失败', e)
       await saveLastSync()
       weReadConnected.value = true
     }
 
-    alert(`同步成功！从微信读书导入了 ${books.length} 本书，每日阅读时长已同步！`)
+    alert(`同步成功！导入了 ${books.length} 本书，保存了 ${savedDays} 天的阅读时长。`)
   } catch (e) {
-    alert('同步失败，请检查 API Key')
+    alert('同步失败：' + e.message + '。请检查 API Key 是否正确')
     console.error(e)
   }
   syncing.value = false
